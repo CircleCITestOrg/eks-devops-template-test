@@ -1,0 +1,26 @@
+# Assumes following environment variables are set:
+# AWS_ACCOUNT_ID
+# CIRCLECI_JOB_AWS_ROLE (= CircleCIJobRole_$OrgId)
+
+version: 2.1
+
+orbs:
+  node: circleci/node@5.1.0
+  aws-cli: circleci/aws-cli@4.1.2
+
+jobs:
+  deploy-aws:
+    executor: node/default
+    steps:
+      - checkout
+      - node/install-packages
+      - aws-cli/setup:
+          role_session_name: CircleCI_Job_${CIRCLE_JOB}
+          role_arn: arn:aws:iam::${AWS_ACCOUNT_ID}:role/${CIRCLECI_JOB_AWS_ROLE}
+      - run: npx cdk bootstrap aws://${AWS_ACCOUNT_ID}/${AWS_DEFAULT_REGION:=us-east-1}
+      - run: npx cdk deploy
+
+workflows:
+  test-and-deploy:
+    jobs:
+      - deploy-aws
