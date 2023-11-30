@@ -1,0 +1,3 @@
+[submodule "cloudformation/cloudformation-base-eks"]
+	path = cloudformation/cloudformation-base-eks
+	url = https://github.com/aws-ia/cloudformation-base-eks.git
