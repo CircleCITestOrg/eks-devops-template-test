@@ -69,7 +69,24 @@ jobs:
     executor: default
     steps:
       - checkout
-      - run: "echo FIXME: build and push to ecr goes here"
+      - attach_workspace:
+          at: /tmp/workspace
+      - setup_remote_docker
+      - run:
+          name: Build docker image
+          command: docker build app -t helloapp
+      - aws-cli/setup:
+          role_session_name: CircleCI_Job_${CIRCLE_JOB}
+          role_arn: arn:aws:iam::${AWS_ACCOUNT_ID}:role/${CIRCLECI_JOB_AWS_ROLE}
+      - run:
+         name: Login to ECR repository and push repo image
+         command: |
+           export REPO_URI=$(cat /tmp/workspace/ecr_outputs.json | jq -r '."CircleCI-ECR"."repoUri"') 
+           aws ecr get-login-password --region ${AWS_DEFAULT_REGION:=us-east-1} |
+             docker login --username AWS --password-stdin $REPO_URI
+           export REPO_TAG=${REPO_URI}/helloapp:${CIRCLE_SHA1}
+           docker tag helloapp ${REPO_TAG}
+           docker push ${REPO_TAG}
 
   deploy-app:
     executor: default

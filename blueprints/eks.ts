@@ -35,7 +35,7 @@ class ECRStack extends cdk.Stack {
     super(scope, id, {})
 
     const repo = new ecr.Repository(this, 'repository', {})
-    new cdk.CfnOutput(this, 'ecr-reponame', {value: repo.repositoryName})
+    new cdk.CfnOutput(this, 'repoUri', {value: repo.repositoryUri})
   }
 }
 
