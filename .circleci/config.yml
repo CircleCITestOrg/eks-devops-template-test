@@ -9,6 +9,11 @@ orbs:
   aws-cli: circleci/aws-cli@4.1.2
   kubernetes: circleci/kubernetes@1.3.1
 
+executors:
+  default:
+    docker:
+    - image: cimg/base:current
+
 jobs:
   deploy-aws:
     executor: node/default
@@ -45,7 +50,35 @@ jobs:
           name: List kubernetes system deployments
           command: kubectl get deployments -n kube-system
 
+  test-app:
+    executor: default
+    steps:
+      - checkout
+      - run: "echo FIXME: tests go here"
+
+  deploy-app-image:
+    executor: default
+    steps:
+      - checkout
+      - attach_workspace:
+          at: /tmp/workspace
+      - aws-cli/setup:
+          role_session_name: CircleCI_Job_${CIRCLE_JOB}
+          role_arn: arn:aws:iam::${AWS_ACCOUNT_ID}:role/${CIRCLECI_JOB_AWS_ROLE}
+      - kubernetes/install-kubectl
+      - run:
+          name: Update kubeconfig to use IAM auth
+          command: /tmp/workspace/update_kubeconfig.sh
+      - run:
+          name: Deploy sample app
+          command: kubectl apply -f app/helloapp.yml
+
 workflows:
   test-and-deploy:
     jobs:
       - deploy-aws
+      - test-app
+      - deploy-app-image:
+          requires:
+            - deploy-aws
+            - test-app
