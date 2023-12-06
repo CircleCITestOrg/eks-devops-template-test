@@ -2,12 +2,12 @@ apiVersion: v1
 kind: Service
 metadata:
   name: helloapp
+  namespace: default
   labels:
     app: helloapp
 spec:
   selector:
     app: helloapp
-    tier: web
   ports:
     - port: 80
       targetPort: 80
@@ -17,14 +17,17 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: helloapp
+  namespace: default
   labels:
     app: helloapp
 spec:
+  selector:
+    matchLabels:
+      app: helloapp
   template:
     metadata:
       labels:
         app: helloapp
-        tier: web
     spec:
       containers:
         - name: helloapp
