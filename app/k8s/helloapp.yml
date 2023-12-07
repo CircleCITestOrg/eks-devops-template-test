@@ -34,5 +34,3 @@ spec:
           image: public.ecr.aws/nginx/nginx:1.23
           ports:
             - containerPort: 80
-
-
