@@ -15,7 +15,7 @@ executors:
     - image: cimg/base:current
 
 jobs:
-  deploy-aws:
+  deploy-ecr:
     executor: node/default
     steps:
       - checkout
@@ -27,31 +27,49 @@ jobs:
           name: Bootstrap AWS CDK
           command: npx cdk bootstrap aws://${AWS_ACCOUNT_ID}/${AWS_DEFAULT_REGION:=us-east-1}
       - run:
+          name: Deploy ECR repository
+          command: npx cdk deploy CircleCI-ECR --require-approval never --outputs-file ecr_outputs.json
+      - persist_to_workspace:
+          root: .
+          paths:
+            - ecr_outputs.json
+
+  deploy-eks:
+    executor: node/default
+    steps:
+      - checkout
+      - node/install-packages
+      - aws-cli/setup:
+          role_session_name: CircleCI_Job_${CIRCLE_JOB}
+          role_arn: arn:aws:iam::${AWS_ACCOUNT_ID}:role/${CIRCLECI_JOB_AWS_ROLE}
+      - run:
           name: Deploy AWS infrastructure
-          command: npx cdk deploy --all --require-approval never --outputs-file cdk_outputs.json
+          command: npx cdk deploy CircleCI-EKS --require-approval never --outputs-file eks_outputs.json
           no_output_timeout: 30m
       - run:
           name: Generate "update_kubeconfig.sh" script
           command: |
-            cat cdk_outputs.json |
+            cat eks_outputs.json |
             jq -r '."CircleCI-EKS" | to_entries[] | select(.key|startswith("CircleCIEKSConfigCommand")).value' \
             > update_kubeconfig.sh 
             chmod +x update_kubeconfig.sh
       - persist_to_workspace:
           root: .
           paths:
-            - cdk_outputs.json
+            - eks_outputs.json
             - update_kubeconfig.sh
-      - kubernetes/install-kubectl
-      - run:
-          name: Update kubeconfig to use IAM auth
-          command: ./update_kubeconfig.sh
 
   test-app:
     executor: default
     steps:
       - checkout
       - run: "echo FIXME: tests go here"
+
+  build-app:
+    executor: default
+    steps:
+      - checkout
+      - run: "echo FIXME: build and push to ecr goes here"
 
   deploy-app:
     executor: default
@@ -111,9 +129,16 @@ jobs:
 workflows:
   test-and-deploy:
     jobs:
-      - deploy-aws
+      - deploy-ecr
+      - deploy-eks:
+          requires:
+            - deploy-ecr
       - test-app
+      - build-app:
+          requires:
+            - test-app
+            - deploy-ecr
       - deploy-app:
           requires:
-            - deploy-aws
-            - test-app
+            - build-app
+            - deploy-eks
