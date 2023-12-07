@@ -1,0 +1,165 @@
+# Assumes following environment variables are set:
+# AWS_ACCOUNT_ID
+# CIRCLECI_JOB_AWS_ROLE (= CircleCIJobRole_$OrgId)
+
+version: 2.1
+
+orbs:
+  node: circleci/node@5.1.0
+  aws-cli: circleci/aws-cli@4.1.2
+  kubernetes: circleci/kubernetes@1.3.1
+
+executors:
+  default:
+    docker:
+    - image: cimg/base:current
+
+jobs:
+  deploy-ecr:
+    executor: node/default
+    working_directory: ~/project/infrastructure
+    steps:
+      - checkout:
+          path: ~/project
+      - node/install-packages
+      - aws-cli/setup:
+          role_session_name: CircleCI_Job_${CIRCLE_JOB}
+          role_arn: arn:aws:iam::${AWS_ACCOUNT_ID}:role/${CIRCLECI_JOB_AWS_ROLE}
+      - run:
+          name: Bootstrap AWS CDK
+          command: npx cdk bootstrap aws://${AWS_ACCOUNT_ID}/${AWS_DEFAULT_REGION:=us-east-1}
+      - run:
+          name: Deploy ECR repository
+          command: npx cdk deploy CircleCI-ECR --require-approval never --outputs-file ecr_outputs.json
+      - persist_to_workspace:
+          root: .
+          paths:
+            - ecr_outputs.json
+
+  deploy-eks:
+    executor: node/default
+    working_directory: ~/project/infrastructure
+    steps:
+      - checkout:
+          path: ~/project
+      - node/install-packages
+      - aws-cli/setup:
+          role_session_name: CircleCI_Job_${CIRCLE_JOB}
+          role_arn: arn:aws:iam::${AWS_ACCOUNT_ID}:role/${CIRCLECI_JOB_AWS_ROLE}
+      - run:
+          name: Deploy AWS infrastructure
+          command: npx cdk deploy CircleCI-EKS --require-approval never --outputs-file eks_outputs.json
+          no_output_timeout: 30m
+      - run:
+          name: Generate "update_kubeconfig.sh" script
+          command: |
+            cat eks_outputs.json |
+            jq -r '."CircleCI-EKS" | to_entries[] | select(.key|startswith("CircleCIEKSConfigCommand")).value' \
+            > update_kubeconfig.sh 
+            chmod +x update_kubeconfig.sh
+      - persist_to_workspace:
+          root: .
+          paths:
+            - eks_outputs.json
+            - update_kubeconfig.sh
+
+  test-app:
+    executor: default
+    steps:
+      - checkout
+      - run: "echo FIXME: tests go here"
+
+  build-app:
+    executor: default
+    steps:
+      - checkout
+      - attach_workspace:
+          at: /tmp/workspace
+      - setup_remote_docker
+      - run:
+          name: Build docker image
+          command: docker build app -t helloapp
+      - aws-cli/setup:
+          role_session_name: CircleCI_Job_${CIRCLE_JOB}
+          role_arn: arn:aws:iam::${AWS_ACCOUNT_ID}:role/${CIRCLECI_JOB_AWS_ROLE}
+      - run:
+         name: Login to ECR repository and push repo image
+         command: |
+           export REPO_URI=$(cat /tmp/workspace/ecr_outputs.json | jq -r '."CircleCI-ECR"."repoUri"') 
+           aws ecr get-login-password --region ${AWS_DEFAULT_REGION:=us-east-1} |
+             docker login --username AWS --password-stdin $REPO_URI
+           export REPO_TAG=${REPO_URI}/helloapp:${CIRCLE_SHA1}
+           docker tag helloapp ${REPO_TAG}
+           docker push ${REPO_TAG}
+
+  deploy-app:
+    executor: default
+    steps:
+      - checkout
+      - attach_workspace:
+          at: /tmp/workspace
+      - aws-cli/setup:
+          role_session_name: CircleCI_Job_${CIRCLE_JOB}
+          role_arn: arn:aws:iam::${AWS_ACCOUNT_ID}:role/${CIRCLECI_JOB_AWS_ROLE}
+      - kubernetes/install-kubectl
+      - run:
+          name: Update kubeconfig to use IAM auth
+          command: /tmp/workspace/update_kubeconfig.sh
+      - run:
+          name: Install ArgoCD CLI
+          command: |
+            curl -sSL -o argocd-linux-amd64 https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+            sudo install -m 555 argocd-linux-amd64 /usr/local/bin/argocd
+            rm argocd-linux-amd64
+      - run:
+          name: Configure ArgoCD Application
+          command: |
+            cat \<<EOF > argo_config.yml
+            apiVersion: argoproj.io/v1alpha1
+            kind: Application
+            metadata:
+              name: helloapp
+              namespace: argocd
+            spec:
+              destination:
+                namespace: default
+                server: "https://kubernetes.default.svc"
+              source:
+                path: app
+                repoURL: << pipeline.project.git_url >>
+                targetRevision: ${CIRCLE_BRANCH}
+              project: default
+            EOF
+            kubectl apply -f argo_config.yml
+      - run:
+          name: Sync ArgoCD Application
+          command: |
+            export ARGO_SERVER=$(kubectl get svc -n argocd -l app.kubernetes.io/name=argocd-server -o name) 
+            kubectl port-forward $ARGO_SERVER -n argocd 3000:80 &
+            export ARGO_PASSWORD=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
+            sleep 1 # port-forward can take a sec
+            argocd login localhost:3000 --username admin --password $ARGO_PASSWORD --insecure
+            argocd app sync helloapp
+      - run:
+          name: Get public endpoint
+          command: |
+            export APP_HOSTNAME=$(kubectl get svc helloapp -o jsonpath='{.status.loadBalancer.ingress[].hostname}')
+            echo The application has been deployed and is now accessible at
+            echo http://$APP_HOSTNAME
+
+workflows:
+  test-and-deploy:
+    jobs:
+      - deploy-ecr
+      - deploy-eks:
+          requires:
+            - deploy-ecr
+      - test-app
+      - build-app:
+          requires:
+            - test-app
+            - deploy-ecr
+      - deploy-app:
+          requires:
+            - build-app
+            - deploy-eks
