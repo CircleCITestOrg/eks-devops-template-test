@@ -17,8 +17,10 @@ executors:
 jobs:
   deploy-ecr:
     executor: node/default
+    working_directory: ~/project/infrastructure
     steps:
-      - checkout
+      - checkout:
+          path: ~/project
       - node/install-packages
       - aws-cli/setup:
           role_session_name: CircleCI_Job_${CIRCLE_JOB}
@@ -36,8 +38,10 @@ jobs:
 
   deploy-eks:
     executor: node/default
+    working_directory: ~/project/infrastructure
     steps:
-      - checkout
+      - checkout:
+          path: ~/project
       - node/install-packages
       - aws-cli/setup:
           role_session_name: CircleCI_Job_${CIRCLE_JOB}
