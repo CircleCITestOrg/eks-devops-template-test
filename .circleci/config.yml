@@ -88,7 +88,7 @@ jobs:
            export REPO_URI=$(cat /tmp/workspace/ecr_outputs.json | jq -r '."CircleCI-ECR"."repoUri"') 
            aws ecr get-login-password --region ${AWS_DEFAULT_REGION:=us-east-1} |
              docker login --username AWS --password-stdin $REPO_URI
-           export REPO_TAG=${REPO_URI}/helloapp:${CIRCLE_SHA1}
+           export REPO_TAG=${REPO_URI}:${CIRCLE_SHA1}
            docker tag helloapp ${REPO_TAG}
            docker push ${REPO_TAG}
 
