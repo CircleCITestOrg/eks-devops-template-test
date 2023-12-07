@@ -131,7 +131,7 @@ jobs:
                 namespace: default
                 server: "https://kubernetes.default.svc"
               source:
-                path: app
+                path: app/k8s
                 repoURL: << pipeline.project.git_url >>
                 targetRevision: ${CIRCLE_BRANCH}
               project: default
