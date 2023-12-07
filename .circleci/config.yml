@@ -28,7 +28,7 @@ jobs:
           command: npx cdk bootstrap aws://${AWS_ACCOUNT_ID}/${AWS_DEFAULT_REGION:=us-east-1}
       - run:
           name: Deploy AWS infrastructure
-          command: npx cdk deploy --require-approval never --outputs-file cdk_outputs.json
+          command: npx cdk deploy --all --require-approval never --outputs-file cdk_outputs.json
           no_output_timeout: 30m
       - run:
           name: Generate "update_kubeconfig.sh" script
