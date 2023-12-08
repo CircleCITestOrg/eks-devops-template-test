@@ -94,9 +94,18 @@ jobs:
             export REPO_URI=$(cat /tmp/workspace/ecr_outputs.json | jq -r '."CircleCI-ECR"."repoUri"') 
             aws ecr get-login-password --region ${AWS_DEFAULT_REGION:=us-east-1} |
               docker login --username AWS --password-stdin $REPO_URI
-            export REPO_TAG=${REPO_URI}:${CIRCLE_SHA1}
-            docker tag helloapp ${REPO_TAG}
-            docker push ${REPO_TAG}
+            export IMAGE_TAG=${REPO_URI}:${CIRCLE_BUILD_NUM}
+            docker tag helloapp ${IMAGE_TAG}
+            docker push ${IMAGE_TAG}
+            echo "export IMAGE_TAG=${IMAGE_TAG}" >> "$BASH_ENV"
+      - run:
+          name: Update Kubernetes manifest
+          command: |
+            yq ".spec.template.spec.containers[0].image = \"${IMAGE_TAG}\"" app/k8s/deployment.yml > deployment.yml
+      - persist_to_workspace:
+          root: .
+          paths:
+            - deployment.yml
 
   deploy-app:
     executor: default
@@ -112,40 +121,10 @@ jobs:
           name: Update kubeconfig to use IAM auth
           command: /tmp/workspace/update_kubeconfig.sh
       - run:
-          name: Install ArgoCD CLI
-          command: |
-            curl -sSL -o argocd-linux-amd64 https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
-            sudo install -m 555 argocd-linux-amd64 /usr/local/bin/argocd
-            rm argocd-linux-amd64
-      - run:
-          name: Configure ArgoCD Application
-          command: |
-            cat \<<EOF > argo_config.yml
-            apiVersion: argoproj.io/v1alpha1
-            kind: Application
-            metadata:
-              name: helloapp
-              namespace: argocd
-            spec:
-              destination:
-                namespace: default
-                server: "https://kubernetes.default.svc"
-              source:
-                path: app/k8s
-                repoURL: << pipeline.project.git_url >>
-                targetRevision: ${CIRCLE_BRANCH}
-              project: default
-            EOF
-            kubectl apply -f argo_config.yml
-      - run:
-          name: Sync ArgoCD Application
-          command: |
-            export ARGO_SERVER=$(kubectl get svc -n argocd -l app.kubernetes.io/name=argocd-server -o name) 
-            kubectl port-forward $ARGO_SERVER -n argocd 3000:80 &
-            export ARGO_PASSWORD=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)
-            sleep 1 # port-forward can take a sec
-            argocd login localhost:3000 --username admin --password $ARGO_PASSWORD --insecure
-            argocd app sync helloapp
+          name: Deploy sample app
+          command: | 
+            kubectl apply -f /tmp/workspace/deployment.yml
+            kubectl apply -f app/k8s/service.yml
       - run:
           name: Get public endpoint
           command: |
